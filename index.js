@@ -4,6 +4,7 @@
  * @property {String} mime MIME
  * @property {Number} size
  * @property {String} path
+ * @property {function(String):Void} copyTo
  */
 
 const debug = require("debug")("temp-file");
@@ -33,6 +34,14 @@ function decrypt(text) {
     decrypted += decipher.final('utf8');
 
     return decrypted;
+}
+
+/**
+ * @param {String} src
+ * @param {String} dest
+ */
+function copy(src, dest) {
+    fs.copyFileSync(src, dest);
 }
 
 /**
@@ -166,6 +175,7 @@ function file(fileName, options) {
         mime: fileData.m,
         size: fileStats.size,
         path: filePath,
+        copyTo: copy.bind(copy, filePath),
     };
 }
 
