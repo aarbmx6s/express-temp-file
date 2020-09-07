@@ -128,6 +128,10 @@ function init(options) {
  * @returns {FileData}
  */
 function file(fileName, options) {
+    if ( /[^abcdef0-9]/.test(fileName) ) {
+        return null;
+    }
+
     let folder = os.tmpdir();
 
     if ( options ) {
