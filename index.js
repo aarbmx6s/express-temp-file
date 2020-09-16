@@ -58,16 +58,29 @@ function init(options) {
 
     return function(req, res) {
         let contentType = req.get("content-type");
+
+        if ( !contentType ) {
+            res.status(415);
+            res.send();
+            return;
+        }
+
         let contentLength = req.get("content-length");
 
+        if ( !contentLength ) {
+            res.status(411);
+            res.send();
+            return;
+        }
+
         if ( types.indexOf(contentType) === -1 ) {
-            res.status(400);
-            res.send("Unsupported content type");
+            res.status(415);
+            res.send();
             return;
         }
         if ( contentLength > maxSize ) {
-            res.status(400);
-            res.send("Content is too large");
+            res.status(413);
+            res.send();
             return;
         }
 
@@ -79,16 +92,16 @@ function init(options) {
             if ( buffer.length > maxSize ) {
                 isError = true;
 
-                res.status(400);
-                res.send("Content is too large");
+                res.status(413);
+                res.send();
             }
         });
         req.on("end", function() {
             FileType.fromBuffer(buffer)
                 .then(function(fileTypeData) {
                     if ( types.indexOf(fileTypeData.mime) === -1 ) {
-                        res.status(400);
-                        res.send("Unsupported content type");
+                        res.status(415);
+                        res.send();
                         return;
                     }
 
