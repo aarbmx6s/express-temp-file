@@ -197,6 +197,29 @@ function file(fileName, options) {
 }
 
 /**
+ * 
+ * @param {String} fileName Name of file.
+ * @param {Object=} options
+ * @param {String=} options.folder The folder with files. By default, the system temporary file is used.
+ * @returns {Boolean}
+ */
+function exists(fileName, options) {
+    if ( /[^abcdef0-9]/.test(fileName) ) {
+        return false;
+    }
+
+    let folder = os.tmpdir();
+
+    if ( options ) {
+        if ( options.folder ) {
+            folder = options.folder;
+        }
+    }
+    
+    return fs.existsSync(path.resolve(folder, fileName));
+}
+
+/**
  * @param {Object} options 
  * @param {String=} options.folder The folder with files. By default, the system temporary file is used.
  * @returns {Function} Express framework callback. Details https://expressjs.com/.
@@ -253,4 +276,5 @@ function returner(options) {
 
 module.exports.saver = init;
 module.exports.file = file;
+module.exports.exists = exists;
 module.exports.returner = returner;
