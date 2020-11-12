@@ -1,15 +1,31 @@
 {
   "name": "express-temp-file",
-  "version": "1.0.4",
-  "description": "",
+  "version": "2.0.1",
+  "description": "File saver for express.",
+  "keywords": [
+    "express",
+    "file",
+    "temp",
+    "upload"
+  ],
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/index.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Kostia Svystun <aarbmx6s@gmail.com>",
+  "license": "MIT",
   "dependencies": {
+    "bytes": "^3.1.0",
+    "content-type": "^1.0.4",
+    "crypto-random-string": "^3.3.0",
     "debug": "^4.1.1",
     "file-type": "^14.6.0"
+  },
+  "devDependencies": {
+    "dotenv": "^8.2.0",
+    "eslint": "^7.13.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-jsdoc": "^30.7.7",
+    "express": "^4.17.1"
   }
 }

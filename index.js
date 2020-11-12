@@ -1,276 +1,303 @@
 /**
- * @typedef {Object} FileData
- * @property {String} ext Extension
- * @property {String} mime MIME
- * @property {Number} size
- * @property {String} path
- * @property {function(String):Void} copyTo
+ * @typedef {object} FileData
+ * @property {string} ext Extension
+ * @property {string} mime MIME
+ * @property {number} size File size
+ * @property {string} path File path
+ * @property {function(string):void} copyTo Copy file to path
  */
 
-const debug = require("debug")("temp-file");
-const crypto = require("crypto");
-const fs = require("fs")
-const path = require("path")
-const os = require("os")
+const debug = require('debug')('temp-file');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const bytes = require('bytes');
+const ContentType = require('content-type');
 const FileType = require('file-type');
-
-const CRYPTO_ALGORITH = 'aes-256-ctr';
-const CRYPTO_KEY = Buffer.from(process.env.EXPRESS_TEMP_FILE_KEY || '94ef5e103f5d250bb6486864800fd757a00bbff6aa680573f7c18ffe04f3ab45', 'hex');
-const CRYPTO_NONCE = Buffer.from(process.env.EXPRESS_TEMP_FILE_NONCE || '959128c1f9de8230471a4939a4a84650', 'hex');
-
-function encrypt(text) {
-    let cipher = crypto.createCipheriv(CRYPTO_ALGORITH, CRYPTO_KEY, CRYPTO_NONCE);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-
-    encrypted += cipher.final('hex');
-
-    return encrypted;
-}
-
-function decrypt(text) {
-    let decipher = crypto.createDecipheriv(CRYPTO_ALGORITH, CRYPTO_KEY, CRYPTO_NONCE);
-    let decrypted = decipher.update(text, 'hex', 'utf8');
-
-    decrypted += decipher.final('utf8');
-
-    return decrypted;
-}
+const randomString = require('crypto-random-string');
 
 /**
- * @param {String} src
- * @param {String} dest
+ * @param {string} src Source file
+ * @param {string} dest Destination file
  */
 function copy(src, dest) {
+    debug(`Copy file "${src}" to "${dest}"`);
     fs.copyFileSync(src, dest);
 }
 
 /**
- * @param {Object} options Options
- * @param {Number=} options.maxSize File max size. Default is 524288 bytes.
- * @param {String[]=} options.type Accepted types of files. By default is ["application/octet-stream"].
- * @param {String=} options.folder Folder to save the temporary file. By default, the system temporary file is used.
- * @returns {Function} Express framework callback. Details https://expressjs.com/.
+ * @param {object} options Options
+ * @param {(number|string)=} options.maxSize File max size. Default is 512kb bytes.
+ * {@link https://www.npmjs.com/package/bytes|Details}
+ * @param {Array.<string>=} options.type Accepted types of files. By default is ["application/octet-stream"].
+ * @param {string=} options.folder Folder to save the temporary file. By default, the system temporary file is used.
+ * @param {{
+ *  type?:("hex"|"numeric"|"distinguishable"|"alphanumeric"),
+ *  length:string
+ * }=} options.fileName File name options.
+ * Default type is "alphanumeric" with 64 length.
+ * {@link https://www.npmjs.com/package/crypto-random-string|Details}
+ * @returns {Function} Express framework callback.
+ * {@link Details https://expressjs.com/|Details}
  */
 function init(options) {
-    const maxSize = options.maxSize || 524288;
-    const types = options.type || ["application/octet-stream"];
+    const maxSize = bytes.parse(options.maxSize || '512kb');
+    const types = new Set(options.type || ['application/octet-stream']);
     const folder = options.folder || os.tmpdir();
+    const nameOptions = {
+        type: options.fileName && options.fileName.type || 'alphanumeric',
+        length: options.fileName && options.fileName.length || 64,
+    };
+
+    debug('New file saver.');
+    debug(`Max size: ${bytes(maxSize)}.`);
+    debug(`Types: [${Array.from(types.values()).join(', ')}].`);
+    debug(`Folder: "${folder}".`);
+    debug(`Name: { type: "${nameOptions.type}", length: ${nameOptions.length} }`);
 
     return function(req, res) {
-        let contentType = req.get("content-type");
+        debug('Loading new file.');
+
+        let contentType = req.get('content-type');
 
         if ( !contentType ) {
+            debug('Request has no "Content-Type" header');
             res.status(415);
             res.send();
             return;
         }
 
-        let contentLength = req.get("content-length");
+        let contentLength = req.get('content-length');
 
         if ( !contentLength ) {
+            debug('Request has no "Content-Length" header.');
             res.status(411);
             res.send();
             return;
         }
 
-        if ( types.indexOf(contentType) === -1 ) {
+        contentType = ContentType.parse(contentType).type;
+
+        debug(`Request "Content-Type": "${contentType}".`);
+        debug(`Request "Content-Length": "${bytes(contentLength)}".`);
+
+        if ( !types.has(contentType) ) {
+            debug('Content type is not supported.');
             res.status(415);
             res.send();
             return;
         }
         if ( contentLength > maxSize ) {
+            debug(`Content length ${bytes(contentLength)} is too bid. Max ${bytes(maxSize)}.`);
             res.status(413);
             res.send();
             return;
         }
 
-        let buffer = Buffer.alloc(0);
+        let fileName = randomString(nameOptions);
+        let filePath = path.resolve(folder, fileName);
+        let fileDesc = fs.openSync(filePath, 'a+');
+        let fileLen = 0;
 
-        req.on("data", function(chunk) {
-            buffer = Buffer.concat([buffer, chunk]);
+        debug(`Created new file "${filePath}".`);
 
-            if ( buffer.length > maxSize ) {
-                isError = true;
+        req.on('data', function(chunk) {
+            debug(`Income data ${chunk.length} bytes.`);
+
+            fs.appendFileSync(fileDesc, chunk);
+
+            fileLen += chunk.length;
+
+            debug(`Append data. Chunk: ${chunk.length} bytes. Total: ${fileLen} bytes.`);
+
+            if ( fileLen > maxSize ) {
+                debug(`File size error. Max: ${bytes(maxSize)} bytes. Already loaded: ${bytes(fileLen)}.`);
 
                 res.status(413);
                 res.send();
+                req.destroy();
+
+                debug('Close descriptor.');
+                fs.closeSync(fileDesc);
+
+                debug(`Unlink file "${filePath}".`);
+                fs.unlinkSync(filePath);
             }
         });
-        req.on("end", function() {
-            FileType.fromBuffer(buffer)
+        req.on('end', function() {
+            debug('File loaded successfully.');
+            debug(`File size ${bytes(fileLen)}.`);
+            debug('Close descriptor.');
+            fs.closeSync(fileDesc);
+            debug('Checking file type.');
+            FileType.fromFile(filePath)
                 .then(function(fileTypeData) {
-                    if ( types.indexOf(fileTypeData.mime) === -1 ) {
+                    debug(`File type is "${fileTypeData.mime}".`);
+
+                    if ( !types.has(fileTypeData.mime) ) {
+                        debug('File type is not supported.');
                         res.status(415);
                         res.send();
                         return;
                     }
 
-                    let fileData = JSON.stringify({
-                        t: Date.now(),
-                        r: Math.random(),
-                        e: fileTypeData.ext,
-                        m: fileTypeData.mime,
-                    });
-                    let fileName = encrypt(fileData);
+                    debug(`Return file id "${fileName}".`);
 
-                    try {
-                        fs.writeFileSync(path.resolve(folder, fileName), buffer);
-                        res.status(200);
-                        res.send(fileName);
-                    }
-                    catch (error) {
-                        res.status(500);
-                        res.send();
-                        debug(error);
-                    }
+                    res.status(200);
+                    res.send(fileName);
                 })
                 .catch(function(error) {
+                    debug('Something wrong.');
+                    debug(error);
                     res.status(500);
                     res.send();
-                    debug(error);
                 });
         });
     };
 }
 
 /**
- * 
- * @param {String} fileName Name of file.
- * @param {Object=} options
- * @param {String=} options.folder The folder with files. By default, the system temporary file is used.
- * @returns {FileData}
+ * File name validation
+ * @param {string} fileName File name
+ * @returns {boolean}
  */
-function file(fileName, options) {
-    if ( /[^abcdef0-9]/.test(fileName) ) {
+function fileNameError(fileName) {
+    return /[^a-zA-Z0-9]/.test(fileName);
+}
+
+/**
+ * @param {string} fileName Name of file.
+ * @param {object=} options Options
+ * @param {string=} options.folder The folder with files. By default, the system temporary file is used.
+ * @returns {Promise.<FileData>}
+ */
+async function file(fileName, options) {
+    debug(`Get file "${fileName}".`);
+
+    if ( fileNameError(fileName) ) {
+        debug('File name error.');
         return null;
     }
 
-    let folder = os.tmpdir();
-
-    if ( options ) {
-        if ( options.folder ) {
-            folder = options.folder;
-        }
-    }
-
-    debug(`file: find "${fileName}"`);
-
+    let folder = options && options.folder || os.tmpdir();
     let filePath = path.resolve(folder, fileName);
     let fileStats = null;
 
+    debug(`Test file "${filePath}".`);
+
     try {
         fileStats = fs.statSync(filePath);
-    }
-    catch (error) {
+    } catch (error) {
+        debug(`File "${filePath}" not found.`);
+        debug(error);
         return null;
     }
 
-    debug("file: found");
-
-    let fileJSON = null;
-
-    try {
-        fileJSON = decrypt(fileName);
-    }
-    catch (error) {
+    if ( !fileStats.isFile ) {
+        debug(`File "${filePath}" is not a "file".`);
         return null;
     }
 
-    let fileData = null;
-
-    try {
-        fileData = JSON.parse(fileJSON);
-    }
-    catch (error) {
-        return null;
-    }
-
-    debug(`file: extension: ${fileData.e}; mime: ${fileData.m}`);
-
-    return {
-        ext: fileData.e,
-        mime: fileData.m,
+    let fileType = await FileType.fromFile(filePath);
+    let fileData = {
+        ext: fileType.ext,
+        mime: fileType.mime,
         size: fileStats.size,
         path: filePath,
         copyTo: copy.bind(copy, filePath),
     };
+
+    debug(`File "${filePath}" found successfully.`);
+
+    return fileData;
 }
 
 /**
- * 
- * @param {String} fileName Name of file.
- * @param {Object=} options
- * @param {String=} options.folder The folder with files. By default, the system temporary file is used.
- * @returns {Boolean}
+ * @param {string} fileName Name of file.
+ * @param {object=} options Options
+ * @param {string=} options.folder The folder with files. By default, the system temporary file is used.
+ * @returns {boolean}
  */
 function exists(fileName, options) {
-    if ( /[^abcdef0-9]/.test(fileName) ) {
+    debug(`Check is file "${fileName}" exists.`);
+
+    if ( fileNameError(fileName) ) {
+        debug('File name error.');
         return false;
     }
 
-    let folder = os.tmpdir();
+    let folder = options && options.folder || os.tmpdir();
+    let filePath = path.resolve(folder, fileName);
 
-    if ( options ) {
-        if ( options.folder ) {
-            folder = options.folder;
-        }
+    debug(`Test "${filePath}" file.`);
+
+    try {
+        fileStats = fs.statSync(filePath);
+    } catch (error) {
+        debug(`File "${filePath}" not found.`);
+        debug(error);
+        return false;
     }
-    
-    return fs.existsSync(path.resolve(folder, fileName));
+
+    if ( !fileStats.isFile ) {
+        debug(`File "${filePath}" is not a "file".`);
+        return false;
+    }
+
+    debug(`File "${filePath}" exists.`);
+
+    return true;
 }
 
 /**
- * @param {Object} options 
- * @param {String=} options.folder The folder with files. By default, the system temporary file is used.
- * @returns {Function} Express framework callback. Details https://expressjs.com/.
+ * Return file by id.
+ * Use param name :fid or :id or query param fid or id.
+ * Find file name order :fid || ?fid || :id || ?id
+ * @param {object} options Options
+ * @param {string=} options.folder The folder with files. By default, the system temporary file is used.
+ * @returns {Function} Express framework callback.
+ * {@link https://expressjs.com/|Details}
  */
 function returner(options) {
-    debug("returner: initialization");
+    return function(req, res) {
+        Promise.resolve(true)
+            .then(async function() {
+                let fileName = req.params.fid || req.query.fid || req.params.id || req.query.id;
 
-    options = options || {};
+                if ( !fileName ) {
+                    debug('File name not defined.');
+                    res.status(400);
+                    res.send();
+                    return;
+                }
 
-    return function (req, res) {
-        let fileName = req.params.file_id || req.query.id;
+                debug(`Retrieving "${fileName}" file data.`);
 
-        debug(`returner: find "${fileName}"`);
+                let data = await file(fileName, options);
 
-        if ( !fileName ) {
-            res.status(400);
-            res.send("Bad request");
-            return;
-        }
+                if ( !data ) {
+                    debug('File data not found.');
+                    res.status(404);
+                    res.send();
+                    return;
+                }
 
-        try {
-            let data = file(fileName, options);
+                let stream = fs.createReadStream(data.path);
 
-            if ( !data ) {
-                res.status(404);
-                res.send("Not found");
-                return;
-            }
+                debug(`Return "${data.path}" file.`);
+                debug(`"Content-Type": "${data.mime}"`);
+                debug(`"Content-Length": "${data.size}"`);
 
-            let stream = null;
+                res.set('Content-Type', data.mime);
+                res.set('Content-Length', data.size);
 
-            try {
-                stream = fs.createReadStream(data.path);
-            }
-            catch (error) {
+                stream.pipe(res);
+            }).catch(function(error) {
+                debug('Something wrong.');
+                debug(error);
                 res.status(500);
                 res.send();
-                debug(error);
-                return;
-            }
-
-            res.set("Content-Type", data.mime);
-            res.set("Content-Length", data.size);
-
-            stream.pipe(res);
-        }
-        catch (error) {
-            res.status(500);
-            res.send();
-            debug(error);
-        }
+            });
     };
 }
 
