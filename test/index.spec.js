@@ -9,7 +9,7 @@ const app = express();
 app.get('/file/:id', temp.returner());
 app.post('/file', temp.saver({
     type: ['image/png'],
-    maxSize: '250kb',
+    maxSize: '100kb',
 }));
 
 describe('Temp file test', () => {
@@ -17,7 +17,7 @@ describe('Temp file test', () => {
     let uploadId;
 
     beforeAll(() => {
-        file = fs.readFileSync(path.resolve(__dirname, 'file.png'));
+        file = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAyAAAAJYCAYAAACadoJwAAN6QklEQVR4', 'base64');
     });
 
     test('Upload file', (done) => {
@@ -76,7 +76,7 @@ describe('Temp file test', () => {
         request(app)
             .post('/file')
             .set('Content-Type', 'image/png')
-            .send(Buffer.concat([file, file]))
+            .send(Buffer.concat([file, Buffer.alloc(300 * 1024)]))
             .expect(413)
             .end(done);
     });
